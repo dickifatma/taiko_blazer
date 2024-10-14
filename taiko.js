@@ -91,25 +91,34 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function main() {
-  for (const wallet of wallets) {
-    console.log(`\n\n=== Starting process for wallet: ${wallet.address} ===`);
-    for (let i = 0; i < ITERATIONS; i++) {
-      const success = await performWrapAndUnwrap(wallet, i);
-      if (!success) {
-        console.log(`Stopping process for wallet ${wallet.address} due to error or insufficient funds.`);
-        break;
-      }
-      
-      if (i < ITERATIONS - 1) {
-        console.log(`Waiting for ${ITERATION_DELAY / 60000} minutes before the next iteration...`);
-        await sleep(ITERATION_DELAY);
-      }
+async function processWallet(wallet) {
+  console.log(`\n\n=== Starting process for wallet: ${wallet.address} ===`);
+  for (let i = 0; i < ITERATIONS; i++) {
+    const success = await performWrapAndUnwrap(wallet, i);
+    if (!success) {
+      console.log(`Stopping process for wallet ${wallet.address} due to error or insufficient funds.`);
+      return false;
     }
     
-    console.log(`\n=== Completed all iterations for wallet: ${wallet.address} ===`);
-    console.log(`Waiting for 24 hours before processing the next wallet...`);
-    await sleep(WALLET_COMPLETION_DELAY);
+    if (i < ITERATIONS - 1) {
+      console.log(`Waiting for ${ITERATION_DELAY / 60000} minutes before the next iteration...`);
+      await sleep(ITERATION_DELAY);
+    }
+  }
+  return true;
+}
+
+async function main() {
+  while (true) {
+    for (const wallet of wallets) {
+      const success = await processWallet(wallet);
+      if (success) {
+        console.log(`\n=== Completed all iterations for wallet: ${wallet.address} ===`);
+      }
+      console.log(`Waiting for 24 hours before processing the wallet again...`);
+      await sleep(WALLET_COMPLETION_DELAY);
+    }
+    console.log("\n=== Completed processing all wallets. Starting over... ===\n");
   }
 }
 
