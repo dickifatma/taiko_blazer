@@ -1,5 +1,6 @@
 const { ethers } = require("ethers");
 const axios = require("axios");
+const readline = require("readline");
 require("dotenv").config();
 
 const provider = new ethers.JsonRpcProvider("https://rpc.taiko.xyz");
@@ -19,10 +20,59 @@ const WETH_ABI = [
 ];
 
 const FIXED_GAS_PRICE = ethers.parseUnits("0.2", "gwei");
-const AMOUNT = ethers.parseEther("0.01"); // Amount to wrap/unwrap for TX Value
-const ITERATIONS = 2; // Loop Process TX
+const ITERATIONS = 40; // Loop Process TX [40 Loop for doing 80tx] MAX CAP AT 75x TX
 const ITERATION_DELAY = 2 * 60 * 1000; // 2 minutes in milliseconds
 const WALLET_COMPLETION_DELAY = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
+let FIXED_AMOUNT;
+let MIN_AMOUNT;
+let MAX_AMOUNT;
+let useRandomAmount;
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout
+});
+
+function askQuestion(query) {
+  return new Promise(resolve => rl.question(query, resolve));
+}
+
+async function setupAmountConfig() {
+  const choice = await askQuestion("Choose an option:\n1. Use fixed amount\n2. Use random amount between min and max\nEnter your choice (1 or 2): ");
+
+  if (choice === "1") {
+    useRandomAmount = false;
+    const fixedAmount = await askQuestion("Enter the fixed amount in ETH: ");
+    FIXED_AMOUNT = ethers.parseEther(fixedAmount);
+  } else if (choice === "2") {
+    useRandomAmount = true;
+    const minAmount = await askQuestion("Enter the minimum amount in ETH: ");
+    const maxAmount = await askQuestion("Enter the maximum amount in ETH: ");
+    MIN_AMOUNT = ethers.parseEther(minAmount);
+    MAX_AMOUNT = ethers.parseEther(maxAmount);
+  } else {
+    console.log("Invalid choice. Please run the script again.");
+    process.exit(1);
+  }
+
+  rl.close();
+}
+
+function getRandomAmount() {
+  const minWei = BigInt(MIN_AMOUNT);
+  const maxWei = BigInt(MAX_AMOUNT);
+  const range = maxWei - minWei;
+  const randomBigInt = BigInt(Math.floor(Math.random() * Number(range)));
+  return minWei + randomBigInt;
+}
+
+function getAmount() {
+  if (useRandomAmount) {
+    return getRandomAmount();
+  } else {
+    return FIXED_AMOUNT;
+  }
+}
 
 async function getBalances(provider, wethContract, address) {
   const [ethBalance, wethBalance] = await Promise.all([
@@ -61,21 +111,24 @@ async function performWrapAndUnwrap(wallet, iteration) {
   try {
     await logBalances(provider, wethContract, wallet.address, "start");
 
+    const amount = getAmount();
+    console.log(`Using ${useRandomAmount ? 'random' : 'fixed'} amount: ${ethers.formatEther(amount)} ETH`);
+
     const { ethBalance } = await getBalances(provider, wethContract, wallet.address);
-    if (ethBalance >= AMOUNT) {
-      await wrapETH(wethContract, AMOUNT);
+    if (ethBalance >= amount) {
+      await wrapETH(wethContract, amount);
       await logBalances(provider, wethContract, wallet.address, "after wrapping");
     } else {
-      console.log(`Insufficient ETH balance for wrapping. Need ${ethers.formatEther(AMOUNT)} ETH.`);
+      console.log(`Insufficient ETH balance for wrapping. Need ${ethers.formatEther(amount)} ETH.`);
       return false;
     }
 
     const { wethBalance } = await getBalances(provider, wethContract, wallet.address);
-    if (wethBalance >= AMOUNT) {
-      await unwrapETH(wethContract, AMOUNT);
+    if (wethBalance >= amount) {
+      await unwrapETH(wethContract, amount);
       await logBalances(provider, wethContract, wallet.address, "after unwrapping");
     } else {
-      console.log(`Insufficient WETH balance for unwrapping. Need ${ethers.formatEther(AMOUNT)} WETH.`);
+      console.log(`Insufficient WETH balance for unwrapping. Need ${ethers.formatEther(amount)} WETH.`);
       return false;
     }
 
@@ -109,6 +162,8 @@ async function processWallet(wallet) {
 }
 
 async function main() {
+  await setupAmountConfig();
+
   while (true) {
     for (const wallet of wallets) {
       const success = await processWallet(wallet);
